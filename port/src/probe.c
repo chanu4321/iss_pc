@@ -175,6 +175,54 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
     }
     snprintf(out,size,"%p",(void *)address);
 }
+/* The faulting thread's name (SetThreadDescription), so a fault in a driver or library shows which
+ * of the port's threads called it (pipeline compiler, command recorder, presenter...). */
+static void report_thread_name(void) {
+    typedef HRESULT (WINAPI *GetDescription)(HANDLE, PWSTR *);
+    GetDescription get=(GetDescription)(void (*)(void))GetProcAddress(GetModuleHandleA("kernel32.dll"),"GetThreadDescription");
+    PWSTR wide=NULL;
+    char name[128]="";
+    if (get && SUCCEEDED(get(GetCurrentThread(),&wide)) && wide) {
+        WideCharToMultiByte(CP_UTF8,0,wide,-1,name,sizeof(name),NULL,NULL);
+        LocalFree(wide);
+    }
+    fprintf(stderr,"  thread name: %s\n",name[0] ? name : "(unnamed)");
+}
+/* Call stack of the fault. Code with x64 unwind data (the drivers, system DLLs and this executable)
+ * is unwound with RtlVirtualUnwind, so the stack continues through code that does not keep frame
+ * pointers, such as igvk64.dll; guest code has no unwind data and is followed by its rbp chain. */
+static void report_stack(const CONTEXT *fault) {
+    CONTEXT c=*fault;
+    char where[MAX_PATH+64];
+    describe_address(where,sizeof(where),(uintptr_t)c.Rip);
+    fprintf(stderr,"  #0 %s\n",where);
+    for (int depth=1; depth<32; ++depth) {
+        DWORD64 base=0;
+        PRUNTIME_FUNCTION fn=RtlLookupFunctionEntry(c.Rip,&base,NULL);
+        uintptr_t frame[2];
+        SIZE_T got=0;
+        if (fn) {
+            PVOID handler_data=NULL;
+            DWORD64 establisher=0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,c.Rip,fn,&c,&handler_data,&establisher,NULL);
+        } else if (image && c.Rip-(DWORD64)(uintptr_t)image<0x20000000 && c.Rbp) {
+            if (!ReadProcessMemory(GetCurrentProcess(),(void *)(uintptr_t)c.Rbp,frame,sizeof(frame),&got) ||
+                got!=sizeof(frame) || frame[0]<=c.Rbp) break;
+            c.Rsp=c.Rbp+16;
+            c.Rip=frame[1];
+            c.Rbp=frame[0];
+        } else {
+            /* A leaf without unwind data: the return address is at the top of the stack. */
+            if (!ReadProcessMemory(GetCurrentProcess(),(void *)(uintptr_t)c.Rsp,frame,sizeof(frame[0]),&got) ||
+                got!=sizeof(frame[0])) break;
+            c.Rip=frame[0];
+            c.Rsp+=8;
+        }
+        if (!c.Rip) break;
+        describe_address(where,sizeof(where),(uintptr_t)c.Rip);
+        fprintf(stderr,"  #%d %s\n",depth,where);
+    }
+}
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
@@ -190,17 +238,9 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
+    report_thread_name();
     if (gpu_enabled) tlggpu_dump_guest_writes(info);
-    /* rbp chain (guest and host code keep frame pointers). */
-    uintptr_t rbp=(uintptr_t)c->Rbp;
-    for (int depth=0; depth<24 && rbp; ++depth) {
-        uintptr_t frame[2];
-        SIZE_T got=0;
-        if (!ReadProcessMemory(GetCurrentProcess(),(void *)rbp,frame,sizeof(frame),&got) || got!=sizeof(frame) || frame[0]<=rbp) break;
-        describe_address(where,sizeof(where),frame[1]);
-        fprintf(stderr,"  #%d %s\n",depth,where);
-        rbp=frame[0];
-    }
+    report_stack(c);
     if (isa_table) isa_rewrite_report(isa_table,stderr);
     fflush(NULL);
     TerminateProcess(GetCurrentProcess(),3);

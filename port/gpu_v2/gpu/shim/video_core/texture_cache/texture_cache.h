@@ -575,8 +575,6 @@ private:
     /// iss: the device usage above which the collector runs critical whatever the image bytes
     /// (image budget mode, see GarbageCollectImages).
     u64 device_guard_memory = 0;
-    /// iss: on integrated GPUs, the device usage the RAM left allows (RefreshGcLimits); 0 elsewhere.
-    u64 igpu_ram_guard_memory = 0;
     /// iss: bytes of the registered images (total_used_memory is the whole device's usage).
     u64 image_bytes = 0;
     u64 total_used_samplers = 0;

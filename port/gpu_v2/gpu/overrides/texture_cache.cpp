@@ -9,7 +9,6 @@
 #include "gpu_blackbox.h"
 #include "guest_heap_census.h"
 #include "native_passes.h"
-#include "system_memory.h"
 #include "vram_stats.h"
 #include <cstdio>
 #include <cstdlib>
@@ -221,25 +220,6 @@ void TextureCache::RefreshGcLimits() {
         }();
         device_guard_memory = std::max<u64>(card > headroom ? card - headroom : 0,
                                             card / 2);
-    }
-    // iss: an integrated GPU's memory is system RAM, shared with the game itself, which maps
-    // about 5 GB of guest memory at start. The driver's budget (half the RAM on Windows) does not
-    // count that, so the textures could grow until RAM ran out (Iris Xe, 16 GB: 4.9 GB of GPU
-    // usage, then a fault inside igvk64.dll, 2026-11-07). The guard follows the RAM left now:
-    // current usage plus what is still free, minus ISS_IGPU_RAM_RESERVE_MB (default 2048) kept
-    // for Windows and the game. ISS_IGPU_RAM_RESERVE_MB=0 turns this off.
-    if (instance.IsIntegrated() && instance.CanReportMemoryUsage()) {
-        static const u64 reserve = [] {
-            const char* p = std::getenv("ISS_IGPU_RAM_RESERVE_MB");
-            return u64(p ? std::strtoull(p, nullptr, 10) : 2048) << 20;
-        }();
-        const u64 available = reserve ? iss::system_memory::AvailablePhysical() : 0;
-        if (available != 0) {
-            const u64 usage = instance.GetDeviceMemoryUsage();
-            const u64 room = available > reserve ? available - reserve : 0;
-            igpu_ram_guard_memory = usage + room;
-            device_guard_memory = std::min(device_guard_memory, igpu_ram_guard_memory);
-        }
     }
     u64 budget = forced_gc_budget ? std::min(forced_gc_budget, card) : 0;
     // ISS_GC_BUDGET_MB=auto: the textures get what the device guard leaves after everything else
@@ -1759,10 +1739,6 @@ void TextureCache::GarbageCollectImages() {
                      (unsigned long long)(buffer_cache.ArenaResidentBytes(true) >> 20),
                      (unsigned long long)((usage > known ? usage - known : 0) >> 20),
                      (unsigned long long)(critical_gc_memory >> 20));
-        if (igpu_ram_guard_memory != 0)
-            std::fprintf(stderr, "IGPU_RAM_GUARD guard=%llu MB ram_free=%llu MB\n",
-                         (unsigned long long)(device_guard_memory >> 20),
-                         (unsigned long long)(iss::system_memory::AvailablePhysical() >> 20));
         {
             namespace vs = iss::vram_stats;
             std::fprintf(stderr, "VRAM_OTHER");

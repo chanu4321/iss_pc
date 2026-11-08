@@ -1330,6 +1330,14 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
              "leaves it to the driver)",
              instance.SubgroupSize(), instance.GetSubgroupSizeRange().first,
              instance.GetSubgroupSizeRange().second, instance.RequiredComputeSubgroupSize());
+    // Which stages are pinned: a stage left to the driver may run narrower than the size the
+    // wave64 lowering assumes on variable-width drivers (Intel Xe).
+    LOG_INFO(Render_Vulkan,
+             "Required subgroup size per stage: vertex {}, fragment {}, compute {}; LDS barriers: {}",
+             instance.RequiredSubgroupSize(vk::ShaderStageFlagBits::eVertex),
+             instance.RequiredSubgroupSize(vk::ShaderStageFlagBits::eFragment),
+             instance.RequiredSubgroupSize(vk::ShaderStageFlagBits::eCompute),
+             profile.needs_lds_barriers);
     // Populate the actual Vulkan cache before preloading known pipelines, so both the
     // preload and later new variations can reuse driver compilation data.
     driver_cache_path = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /

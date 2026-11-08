@@ -291,6 +291,11 @@ public:
     /// iss: the same for any stage: graphics stages run the same wave64 lowering (ballots in
     /// vertex and fragment shaders), and drivers report per stage whether the size can be required.
     u32 RequiredSubgroupSize(vk::ShaderStageFlagBits stage_bit) const {
+        // Only on the stages the driver lists (VUID-VkPipelineShaderStageCreateInfo-pNext-02755):
+        // AMD lists compute alone, so its vertex and fragment stages get no required size.
+        if (!(vk13_props.requiredSubgroupSizeStages & stage_bit)) {
+            return 0;
+        }
         if (IsSubgroupSize64Supported()) {
             return 64;
         }
@@ -311,6 +316,11 @@ public:
     /// iss: the driver's {min, max} subgroup size (VK_EXT_subgroup_size_control).
     std::pair<u32, u32> GetSubgroupSizeRange() const {
         return {vk13_props.minSubgroupSize, vk13_props.maxSubgroupSize};
+    }
+
+    /// iss: the stages a subgroup size can be required on (VK_EXT_subgroup_size_control).
+    vk::ShaderStageFlags RequiredSubgroupSizeStages() const {
+        return vk13_props.requiredSubgroupSizeStages;
     }
 
     /// Returns true when VK_KHR_workgroup_memory_explicit_layout is supported.

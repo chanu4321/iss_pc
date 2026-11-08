@@ -134,6 +134,8 @@ uint64_t IssImageBase(); // bridge.cpp
 
 namespace Vulkan {
 
+static void RecordFullBarrierIfEnabled(const CommandRecorder& cmdbuf); // ISS_FULL_BARRIERS
+
 thread_local Rasterizer::SplitThreadState Rasterizer::split_thread_state{};
 #include "draw_pipe_rasterizer.inl"
 
@@ -2198,6 +2200,7 @@ bool Rasterizer::RecordPreparedCompute(const ComputePipeline* pipeline,
     const auto& stage = pipeline->GetStage(Shader::SwStage::Compute);
     Sched().ProfileDispatchBegin(stage.pgm_hash);
     if (bindings.indirect) {
+        RecordFullBarrierIfEnabled(cmdbuf);
         cmdbuf.dispatchIndirect(bindings.indirect->buffer->Handle(), bindings.indirect->offset);
     } else {
         cmdbuf.dispatch(inputs.cs.dim_x, inputs.cs.dim_y, inputs.cs.dim_z);
@@ -3008,6 +3011,29 @@ void Rasterizer::DispatchDirect() {
     dc.Done();
 }
 
+// ISS_FULL_BARRIERS=1 (diagnosis): a full memory barrier before every dispatch, all earlier work
+// against all later work. Tells a missing synchronization from a broken shader: an Intel GPU hang
+// went away when every 20 dispatches were submitted on their own (2026-11-09), which a submission
+// boundary's full dependency would also explain.
+static void RecordFullBarrierIfEnabled(const CommandRecorder& cmdbuf) {
+    static const bool on = [] {
+        const char* p = std::getenv("ISS_FULL_BARRIERS");
+        const bool enabled = p && p[0] == '1';
+        if (enabled) std::fprintf(stderr, "ISS_FULL_BARRIERS on: a full barrier before every dispatch\n");
+        return enabled;
+    }();
+    if (!on) return;
+    cmdbuf.Record([](vk::CommandBuffer c) {
+        const vk::MemoryBarrier2 barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        };
+        c.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    });
+}
+
 void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     std::optional<iss::diagnostics::Scope> worker_scope;
     if(OnDrawWorker())worker_scope.emplace(iss::diagnostics::Dispatch);
@@ -3114,6 +3140,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     pipeline->BindResources(Sched(), set_writes, push_data);
 
     const auto cmdbuf = Sched().Recorder();
+    RecordFullBarrierIfEnabled(cmdbuf);
     BindPipelineLazy(Sched(), vk::PipelineBindPoint::eCompute, pipeline);
     if (GpuCrashDiag::Enabled() || GpuCrashDiag::Blackbox()) {
         MarkDispatch(Sched(), cmdbuf, cs.pgm_hash, cs_program.dim_x, cs_program.dim_y,
@@ -3239,6 +3266,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
                      0, address + offset);
     }
     Sched().ProfileDispatchBegin(pipeline->GetStage(Shader::SwStage::Compute).pgm_hash);
+    RecordFullBarrierIfEnabled(cmdbuf);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
     iss::feedback_join::Recorded();
     Sched().ProfileDispatchEnd();

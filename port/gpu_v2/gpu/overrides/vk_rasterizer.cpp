@@ -3032,6 +3032,12 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         return;
     }
 
+    // Hang diagnosis (GPUs without buffer markers), both off by default:
+    // ISS_SKIP_DISPATCH=<hash>[,<hash>...]: those compute shaders are not dispatched (does the
+    // hang go away without them?). ISS_SUBMIT_EVERY_DISPATCH=N: the graphics queue is submitted
+    // every N dispatches, so the tick a hang stops in holds at most N of them (HANG_DISPATCHES).
+    if (iss::hang_trace::SkipDispatch(cs.pgm_hash)) return;
+    if (!UseComputeQueue(pipeline) && iss::hang_trace::SubmitDue()) scheduler.Flush();
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
     // Hang trace: the dispatch with the tick of the queue it is recorded on (0 graphics).

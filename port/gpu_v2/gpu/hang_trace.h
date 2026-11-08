@@ -9,6 +9,7 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -49,6 +50,42 @@ inline void Note(std::uint64_t tick, std::uint64_t hash, std::uint32_t queue, st
     d.y = y;
     d.z = z;
     d.stamp.store(seq + 1, std::memory_order_release);
+}
+
+/// ISS_SKIP_DISPATCH=<hex hash>[,<hex hash>...] (up to 16): true for those shaders.
+inline bool SkipDispatch(std::uint64_t hash) {
+    static const auto list = [] {
+        std::array<std::uint32_t, 16> hashes{};
+        std::uint32_t n = 0;
+        if (const char* p = std::getenv("ISS_SKIP_DISPATCH")) {
+            while (*p && n < hashes.size()) {
+                char* end = nullptr;
+                const unsigned long long value = std::strtoull(p, &end, 16);
+                if (end == p) break;
+                hashes[n++] = static_cast<std::uint32_t>(value);
+                p = *end == ',' ? end + 1 : end;
+            }
+            for (std::uint32_t i = 0; i < n; ++i)
+                std::fprintf(stderr, "HANG_SKIP_DISPATCH shader=%08x\n", hashes[i]);
+        }
+        return std::pair{hashes, n};
+    }();
+    for (std::uint32_t i = 0; i < list.second; ++i)
+        if (list.first[i] == static_cast<std::uint32_t>(hash)) return true;
+    return false;
+}
+
+/// ISS_SUBMIT_EVERY_DISPATCH=N: true every N graphics-queue dispatches (0: never).
+inline bool SubmitDue() {
+    static const std::uint32_t every = [] {
+        const char* p = std::getenv("ISS_SUBMIT_EVERY_DISPATCH");
+        return p ? static_cast<std::uint32_t>(std::strtoul(p, nullptr, 10)) : 0u;
+    }();
+    if (every == 0) return false;
+    static thread_local std::uint32_t count = 0;
+    if (++count < every) return false;
+    count = 0;
+    return true;
 }
 
 /// The dispatches noted on `queue` with done < tick <= upto, grouped by shader (at most 96).

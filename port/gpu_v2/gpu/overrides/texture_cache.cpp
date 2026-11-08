@@ -227,9 +227,7 @@ void TextureCache::RefreshGcLimits() {
     // count that, so the textures could grow until RAM ran out (Iris Xe, 16 GB: 4.9 GB of GPU
     // usage, then a fault inside igvk64.dll, 2026-11-07). The guard follows the RAM left now:
     // current usage plus what is still free, minus ISS_IGPU_RAM_RESERVE_MB (default 2048) kept
-    // for Windows and the game, never under ISS_IGPU_GUARD_FLOOR_MB (default 2048): with under
-    // 2 GB of RAM free the guard sat at the usage itself (361 MB at start, Iris Xe 2026-11-08) and
-    // the collector ran critical from the first frame. ISS_IGPU_RAM_RESERVE_MB=0 turns this off.
+    // for Windows and the game. ISS_IGPU_RAM_RESERVE_MB=0 turns this off.
     if (instance.IsIntegrated() && instance.CanReportMemoryUsage()) {
         static const u64 reserve = [] {
             const char* p = std::getenv("ISS_IGPU_RAM_RESERVE_MB");
@@ -239,11 +237,7 @@ void TextureCache::RefreshGcLimits() {
         if (available != 0) {
             const u64 usage = instance.GetDeviceMemoryUsage();
             const u64 room = available > reserve ? available - reserve : 0;
-            static const u64 floor = [] {
-                const char* p = std::getenv("ISS_IGPU_GUARD_FLOOR_MB");
-                return u64(p ? std::strtoull(p, nullptr, 10) : 2048) << 20;
-            }();
-            igpu_ram_guard_memory = std::max(usage + room, std::min(floor, card));
+            igpu_ram_guard_memory = usage + room;
             device_guard_memory = std::min(device_guard_memory, igpu_ram_guard_memory);
         }
     }

@@ -1237,6 +1237,21 @@ static bool SplitsGcnWaves(const Instance& instance) {
     return allowed && !instance.IsSubgroupSize64Supported() && instance.SubgroupSize() < 64;
 }
 
+// iss: the two barrier passes for workgroups larger than a GCN wave (lds_barriers_multi_wave,
+// wave_memory_barriers) stay opt-in on NVIDIA, where they were measured. On other hosts that split
+// GCN waves (Intel Xe, 32 wide) they are on by default: the game's tiled lighting runs workgroups
+// of several waves that still share LDS and memory within each wave in lockstep, and with them
+// off the lighting flickered and left surfaces black (fish cannery, 2026-11-08). <name>=0 turns
+// one off; both change the compute variant, so caches are compiled again once.
+static bool SplitBarriersByDefault(const Instance& instance, const char* name) {
+    if (!SplitsGcnWaves(instance) || instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+        instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp) {
+        return false;
+    }
+    const char* p = std::getenv(name);
+    return !(p && p[0] == '0');
+}
+
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
@@ -1293,9 +1308,11 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp ||
                               SplitsGcnWaves(instance),
         .lds_barriers_multi_wave =
-            Common::Perf::GetTuning().lds_barriers_multi_wave.load(std::memory_order_relaxed),
+            Common::Perf::GetTuning().lds_barriers_multi_wave.load(std::memory_order_relaxed) ||
+            SplitBarriersByDefault(instance, "ISS_LDS_MULTI_WAVE"),
         .wave_memory_barriers =
-            Common::Perf::GetTuning().wave_memory_barriers.load(std::memory_order_relaxed),
+            Common::Perf::GetTuning().wave_memory_barriers.load(std::memory_order_relaxed) ||
+            SplitBarriersByDefault(instance, "ISS_WAVE_MEMORY_BARRIERS"),
         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,

@@ -1,4 +1,5 @@
 #include <shared_mutex>
+#include "hang_trace.h"
 #include "../../../src/iss_native_resolution.h"
 #include "../../../src/iss_warning_budget.h"
 #include <algorithm>
@@ -3033,6 +3034,9 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    // Hang trace: the dispatch with the tick of the queue it is recorded on (0 graphics).
+    iss::hang_trace::Note(Sched().CurrentTick(), cs.pgm_hash, &Sched() == &scheduler ? 0u : 1u,
+                          cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
     auto& set_writes = ComputeBindingsActive() ? compute_bindings.set_writes : this->set_writes;
     auto& push_data = ComputeBindingsActive() ? compute_bindings.push_data : this->push_data;
     auto& needs_barrier = ComputeBindingsActive() ? compute_bindings.needs_barrier

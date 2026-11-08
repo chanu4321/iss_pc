@@ -1,4 +1,5 @@
 #include <atomic>
+#include "hang_trace.h"
 #include "deep_profile.h"
 #include "repeat_census.h"
 #include "compute_phase.h"
@@ -1654,6 +1655,9 @@ void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, 
                     device_addr, tick, on_queue ? "readback" : "graphics",
                     semaphore->KnownGpuTick(), scheduler.SubmittedTick(), scheduler.CurrentTick(),
                     scheduler.GetWorkSemaphore()->KnownGpuTick());
+        // Which compute shaders the unfinished graphics submissions ran (GPUs without markers).
+        iss::hang_trace::Dump(0, scheduler.GetWorkSemaphore()->KnownGpuTick(),
+                              scheduler.CurrentTick());
         semaphore->Wait(tick);
     }
     Common::Perf::Add(Common::Perf::ReadbackAsyncWaitNs, Common::Perf::NowNs() - wait_start);

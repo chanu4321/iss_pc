@@ -316,9 +316,8 @@ void GraphicsPipeline::CompileVariant(bool fast) {
         });
     }
 
-    // iss: 64 where the driver runs wave64 natively; elsewhere the reported subgroup size, where
-    // the driver lets a stage require it (variable-width drivers such as Intel Xe, whose ballots
-    // the wave64 lowering assumes to span exactly that many lanes; see RequiredSubgroupSize).
+    // iss: 64 only on the stages the driver lists in requiredSubgroupSizeStages (AMD lists compute
+    // alone, so this is usually nothing); see Instance::RequiredSubgroupSize.
     std::array<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo, MaxShaderStages> subgroup_size_cis{};
     for (size_t i = 0; i < shader_stages.size() && i < subgroup_size_cis.size(); ++i) {
         auto& stage = shader_stages[i];

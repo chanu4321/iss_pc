@@ -2198,13 +2198,17 @@ bool Rasterizer::RecordPreparedCompute(const ComputePipeline* pipeline,
     const auto cmdbuf = Sched().Recorder();
     BindPipelineLazy(Sched(), vk::PipelineBindPoint::eCompute, pipeline);
     const auto& stage = pipeline->GetStage(Shader::SwStage::Compute);
+    // Hang trace (this path cannot skip a dispatch: its packet is already published).
+    iss::hang_trace::Note(Sched().CurrentTick(), stage.pgm_hash, asc ? 1u : 0u, inputs.cs.dim_x,
+                          inputs.cs.dim_y, inputs.cs.dim_z);
     Sched().ProfileDispatchBegin(stage.pgm_hash);
+    RecordFullBarrierIfEnabled(cmdbuf);
     if (bindings.indirect) {
-        RecordFullBarrierIfEnabled(cmdbuf);
         cmdbuf.dispatchIndirect(bindings.indirect->buffer->Handle(), bindings.indirect->offset);
     } else {
         cmdbuf.dispatch(inputs.cs.dim_x, inputs.cs.dim_y, inputs.cs.dim_z);
     }
+    RecordFullBarrierIfEnabled(cmdbuf);
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
     for (const auto& item : bindings.buffers) {
@@ -3011,15 +3015,15 @@ void Rasterizer::DispatchDirect() {
     dc.Done();
 }
 
-// ISS_FULL_BARRIERS=1 (diagnosis): a full memory barrier before every dispatch, all earlier work
-// against all later work. Tells a missing synchronization from a broken shader: an Intel GPU hang
+// ISS_FULL_BARRIERS=1 (diagnosis): a full memory barrier before and after every dispatch, all
+// earlier work against all later work (compute against compute and against the draws around it). Tells a missing synchronization from a broken shader: an Intel GPU hang
 // went away when every 20 dispatches were submitted on their own (2026-11-09), which a submission
 // boundary's full dependency would also explain.
 static void RecordFullBarrierIfEnabled(const CommandRecorder& cmdbuf) {
     static const bool on = [] {
         const char* p = std::getenv("ISS_FULL_BARRIERS");
         const bool enabled = p && p[0] == '1';
-        if (enabled) std::fprintf(stderr, "ISS_FULL_BARRIERS on: a full barrier before every dispatch\n");
+        if (enabled) std::fprintf(stderr, "ISS_FULL_BARRIERS on: a full barrier before and after every dispatch\n");
         return enabled;
     }();
     if (!on) return;
@@ -3148,6 +3152,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     }
     Sched().ProfileDispatchBegin(cs.pgm_hash);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    RecordFullBarrierIfEnabled(cmdbuf);
     iss::feedback_join::Recorded();
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
@@ -3227,8 +3232,14 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
         return;
     }
 
+    if (iss::hang_trace::SkipDispatch(pipeline->GetStage(Shader::SwStage::Compute).pgm_hash)) return;
+    if (!UseComputeQueue(pipeline) && iss::hang_trace::SubmitDue()) scheduler.Flush();
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    // Hang trace: indirect dispatches note 0x0x0 groups (the counts are in GPU memory).
+    iss::hang_trace::Note(Sched().CurrentTick(),
+                          pipeline->GetStage(Shader::SwStage::Compute).pgm_hash,
+                          &Sched() == &scheduler ? 0u : 1u, 0, 0, 0);
     auto& set_writes = ComputeBindingsActive() ? compute_bindings.set_writes : this->set_writes;
     auto& push_data = ComputeBindingsActive() ? compute_bindings.push_data : this->push_data;
     auto& needs_barrier = ComputeBindingsActive() ? compute_bindings.needs_barrier
@@ -3268,6 +3279,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     Sched().ProfileDispatchBegin(pipeline->GetStage(Shader::SwStage::Compute).pgm_hash);
     RecordFullBarrierIfEnabled(cmdbuf);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
+    RecordFullBarrierIfEnabled(cmdbuf);
     iss::feedback_join::Recorded();
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();

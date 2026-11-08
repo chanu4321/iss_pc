@@ -278,21 +278,21 @@ public:
     }
 
     /// iss: the subgroup size compute pipelines must be created with, or 0 to leave it to the
-    /// driver. The recompiler's wave64 lowering and LDS barrier passes assume compute shaders run
-    /// with exactly SubgroupSize() lanes (profile.subgroup_size). Drivers with a variable subgroup
-    /// size (Intel Xe: 8/16/32, reporting 32) may compile a compute shader narrower than that, so
-    /// ballots split a 64-lane GCN wave into the wrong halves and a waterfall/ballot loop can never
-    /// finish: a GPU hang, then VK_ERROR_DEVICE_LOST after the Windows TDR. Pinning the size makes
-    /// the runtime match the assumption. ISS_PIN_SUBGROUP=0 restores the driver's choice.
+    /// driver. The recompiler's wave64 lowering (compute only) and the LDS barrier passes assume
+    /// compute shaders run with exactly SubgroupSize() lanes (profile.subgroup_size). Drivers with
+    /// a variable width (Intel Xe: 8/16/32, reporting 32) may compile a compute shader narrower,
+    /// which breaks that assumption. Pinning the size makes the runtime match it.
+    /// ISS_PIN_SUBGROUP=0 restores the driver's choice. (On Intel this alone did not stop the GPU
+    /// hangs, 2026-11-08; it removes one known way for the lowering to be wrong.)
     u32 RequiredComputeSubgroupSize() const {
         return RequiredSubgroupSize(vk::ShaderStageFlagBits::eCompute);
     }
 
-    /// iss: the same for any stage: graphics stages run the same wave64 lowering (ballots in
-    /// vertex and fragment shaders), and drivers report per stage whether the size can be required.
+    /// iss: the size to require on a stage, only where the driver lists that stage in
+    /// requiredSubgroupSizeStages (VUID-VkPipelineShaderStageCreateInfo-pNext-02755; AMD lists
+    /// compute alone): 64 on wave64-capable drivers (as before), and the reported size on
+    /// variable-width drivers for compute only, the one stage the wave64 lowering runs on.
     u32 RequiredSubgroupSize(vk::ShaderStageFlagBits stage_bit) const {
-        // Only on the stages the driver lists (VUID-VkPipelineShaderStageCreateInfo-pNext-02755):
-        // AMD lists compute alone, so its vertex and fragment stages get no required size.
         if (!(vk13_props.requiredSubgroupSizeStages & stage_bit)) {
             return 0;
         }
@@ -304,8 +304,8 @@ public:
             return !(p && p[0] == '0');
         }();
         const u32 size = vk11_props.subgroupSize;
-        if (!pin || !vk13_features.subgroupSizeControl ||
-            !(vk13_props.requiredSubgroupSizeStages & stage_bit) ||
+        if (!pin || stage_bit != vk::ShaderStageFlagBits::eCompute ||
+            !vk13_features.subgroupSizeControl ||
             vk13_props.minSubgroupSize == vk13_props.maxSubgroupSize ||
             size < vk13_props.minSubgroupSize || size > vk13_props.maxSubgroupSize) {
             return 0;

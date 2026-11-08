@@ -1224,11 +1224,12 @@ void PipelineCache::ScoutDraw(const AmdGpu::Regs& regs, AmdGpu::ScoutDraw& draw,
 }
 
 // iss: a GCN workgroup of 64 invocations runs as one wave in lockstep, so the game's compute
-// shaders share LDS within it without barriers. Hosts whose subgroups are narrower (NVIDIA, and
-// Intel Xe at 32) split it into subgroups that do not run in lockstep: those reads race (wrong
-// lighting, black surfaces) and loops waiting on another half's LDS writes can spin forever
-// (GPU hang, device lost). Only NVIDIA got the barriers; any host not running 64 wide needs them.
-// ISS_LDS_BARRIERS=0 restores the driver-ID rule (testing).
+// shaders may share LDS within it without barriers. Hosts whose subgroups are narrower split it
+// into subgroups that do not run in lockstep, and those LDS reads race. needs_lds_barriers was set
+// by driver ID (NVIDIA, KosmicKrisp); Intel Xe runs compute 32 wide too and was left out. Any host
+// not running compute 64 wide now gets them. (On Intel the GPU hangs went on with them,
+// 2026-11-08; they close a known race, not a proven cause.) ISS_LDS_BARRIERS=0 restores the
+// driver-ID rule.
 static bool SplitsGcnWaves(const Instance& instance) {
     static const bool allowed = [] {
         const char* p = std::getenv("ISS_LDS_BARRIERS");
@@ -1238,18 +1239,17 @@ static bool SplitsGcnWaves(const Instance& instance) {
 }
 
 // iss: the two barrier passes for workgroups larger than a GCN wave (lds_barriers_multi_wave,
-// wave_memory_barriers) stay opt-in on NVIDIA, where they were measured. On other hosts that split
-// GCN waves (Intel Xe, 32 wide) they are on by default: the game's tiled lighting runs workgroups
-// of several waves that still share LDS and memory within each wave in lockstep, and with them
-// off the lighting flickered and left surfaces black (fish cannery, 2026-11-08). <name>=0 turns
-// one off; both change the compute variant, so caches are compiled again once.
-static bool SplitBarriersByDefault(const Instance& instance, const char* name) {
+// wave_memory_barriers) are opt-in on every host, as upstream. On hosts that split GCN waves
+// other than NVIDIA (Intel Xe), <name>=1 turns one on for testing; both change the compute
+// variant, so caches are compiled again once. On by default they did not change the Intel hangs
+// (2026-11-09), so they stay off until a test shows they fix something.
+static bool SplitBarriersOptIn(const Instance& instance, const char* name) {
     if (!SplitsGcnWaves(instance) || instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
         instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp) {
         return false;
     }
     const char* p = std::getenv(name);
-    return !(p && p[0] == '0');
+    return p && p[0] == '1';
 }
 
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
@@ -1309,10 +1309,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                               SplitsGcnWaves(instance),
         .lds_barriers_multi_wave =
             Common::Perf::GetTuning().lds_barriers_multi_wave.load(std::memory_order_relaxed) ||
-            SplitBarriersByDefault(instance, "ISS_LDS_MULTI_WAVE"),
+            SplitBarriersOptIn(instance, "ISS_LDS_MULTI_WAVE"),
         .wave_memory_barriers =
             Common::Perf::GetTuning().wave_memory_barriers.load(std::memory_order_relaxed) ||
-            SplitBarriersByDefault(instance, "ISS_WAVE_MEMORY_BARRIERS"),
+            SplitBarriersOptIn(instance, "ISS_WAVE_MEMORY_BARRIERS"),
         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,

@@ -7,6 +7,7 @@
 #ifndef ISS_NATIVE_RESOLUTION_H
 #define ISS_NATIVE_RESOLUTION_H
 #include <stdint.h>
+#include "iss_title.h"
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
@@ -187,7 +188,7 @@ static inline void iss_native_changes(const IssNativePlan *p,IssNativeSite sites
 static inline int iss_native_apply(unsigned char *image,uint64_t size,const char *serial,
                                    const char *version,IssNativeConfig config) {
     IssNativePlan plan;
-    if(!image || strcmp(serial,"CUSA00223") || strcmp(version,"01.07") || !iss_native_plan(config,&plan))return 0;
+    if(!image || !iss_title_v107(serial,version) || !iss_native_plan(config,&plan))return 0;
     const uint32_t exposure_entries=iss_native_exposure_entries(plan.width,plan.height);
     if(!exposure_entries || (exposure_entries>ISS_EXPOSURE_ORIGINAL_ENTRIES&&!iss_native_exposure_guard(image,size)))return 0;
     if(size<0x58030cu+sizeof(iss_native_projection) ||

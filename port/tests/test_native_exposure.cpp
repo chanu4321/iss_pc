@@ -26,7 +26,9 @@ int main(){
  for(unsigned i=0;i<sizeof(iss_exposure_allocator);i++)check(0x171310+i);
  for(const auto&s:iss_exposure_sites){for(unsigned i=0;i<5;i++)check(s.offset+i);assert(!iss_native_exposure_guard(original.data(),s.offset+4));}
  for(const char* version:{"01.00","01.08"}){auto b=original;assert(!iss_native_apply(b.data(),b.size(),"CUSA00223",version,{4,100,1}));assert(b==original);}
- auto b=original;assert(!iss_native_apply(b.data(),b.size(),"CUSA00004","01.07",{4,100,1}));assert(b==original);
+ auto b=original;assert(!iss_native_apply(b.data(),b.size(),"CUSA99999","01.07",{4,100,1}));assert(b==original);
+ {auto eu=original;b=original;assert(iss_native_apply(eu.data(),eu.size(),"CUSA00004","01.07",{4,100,1}));
+  assert(iss_native_apply(b.data(),b.size(),"CUSA00223","01.07",{4,100,1}));assert(eu==b);}
  b=original;assert(iss_native_apply(b.data(),b.size(),"CUSA00223","01.07",{4,100,1}));
  auto expected=original;IssNativePlan p;assert(iss_native_plan({4,100,1},&p));IssNativeSite changes[ISS_NATIVE_SITE_COUNT];iss_native_changes(&p,changes);
  for(const auto&s:changes)memcpy(expected.data()+s.offset,s.after,s.length);

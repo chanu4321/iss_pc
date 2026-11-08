@@ -105,7 +105,12 @@ int main(int argc,char** argv){
         assert(!iss_native_apply(image.data(),image.size(),"CUSA00223","01.07",{3,100,1}));assert(image==before);guards++;
     }
     image=original;
-    assert(!iss_native_apply(image.data(),image.size(),"CUSA00004","01.07",{3,100,1}));assert(image==original);
+    assert(!iss_native_apply(image.data(),image.size(),"CUSA99999","01.07",{3,100,1}));assert(image==original);
+    // The European 1.07 executable is the US one byte for byte: same signatures, same writes.
+    {auto eu=original,us=original;assert(iss_native_apply(eu.data(),eu.size(),"CUSA00004","01.07",{3,100,1}));
+     assert(iss_native_apply(us.data(),us.size(),"CUSA00223","01.07",{3,100,1}));assert(eu==us);
+     eu=original;eu[iss_native_sites[0].offset]^=1;auto before=eu;
+     assert(!iss_native_apply(eu.data(),eu.size(),"CUSA00004","01.07",{3,100,1}));assert(eu==before);}
     assert(!iss_native_apply(image.data(),image.size(),"CUSA00223","01.00",{3,100,1}));assert(image==original);
     assert(!iss_native_apply(image.data(),100,"CUSA00223","01.07",{3,100,1}));assert(image==original);
     assert(!iss_native_apply(image.data(),image.size(),"CUSA00223","01.07",{5,200,1}));assert(image==original);

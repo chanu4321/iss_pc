@@ -1304,6 +1304,11 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
              "Compute shader LDS barriers for multi wave workgroups: {}, buffer memory barriers "
              "within split GCN waves: {}",
              lds_multi_wave, profile.wave_memory_barriers);
+    LOG_INFO(Render_Vulkan,
+             "Compute subgroup size: {} (driver range {}-{}, required: {}; ISS_PIN_SUBGROUP=0 "
+             "leaves it to the driver)",
+             instance.SubgroupSize(), instance.GetSubgroupSizeRange().first,
+             instance.GetSubgroupSizeRange().second, instance.RequiredComputeSubgroupSize());
     // Populate the actual Vulkan cache before preloading known pipelines, so both the
     // preload and later new variations can reuse driver compilation data.
     driver_cache_path = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /

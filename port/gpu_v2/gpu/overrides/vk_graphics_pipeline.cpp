@@ -316,11 +316,15 @@ void GraphicsPipeline::CompileVariant(bool fast) {
         });
     }
 
-    const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
-        .requiredSubgroupSize = 64,
-    };
-    for (auto& stage : shader_stages) {
-        stage.pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr;
+    // iss: 64 where the driver runs wave64 natively; elsewhere the reported subgroup size, where
+    // the driver lets a stage require it (variable-width drivers such as Intel Xe, whose ballots
+    // the wave64 lowering assumes to span exactly that many lanes; see RequiredSubgroupSize).
+    std::array<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo, MaxShaderStages> subgroup_size_cis{};
+    for (size_t i = 0; i < shader_stages.size() && i < subgroup_size_cis.size(); ++i) {
+        auto& stage = shader_stages[i];
+        const u32 size = instance.RequiredSubgroupSize(stage.stage);
+        subgroup_size_cis[i].requiredSubgroupSize = size;
+        stage.pNext = size != 0 ? &subgroup_size_cis[i] : nullptr;
     }
 
     const auto depth_format =

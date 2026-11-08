@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <span>
+#include <utility>
 #include <unordered_map>
 
 #include "video_core/renderer_vulkan/image_format_cache.h"
@@ -273,6 +275,42 @@ public:
     /// Returns true if the subgroup size can be set to match guest subgroup size
     bool IsSubgroupSize64Supported() const {
         return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64;
+    }
+
+    /// iss: the subgroup size compute pipelines must be created with, or 0 to leave it to the
+    /// driver. The recompiler's wave64 lowering and LDS barrier passes assume compute shaders run
+    /// with exactly SubgroupSize() lanes (profile.subgroup_size). Drivers with a variable subgroup
+    /// size (Intel Xe: 8/16/32, reporting 32) may compile a compute shader narrower than that, so
+    /// ballots split a 64-lane GCN wave into the wrong halves and a waterfall/ballot loop can never
+    /// finish: a GPU hang, then VK_ERROR_DEVICE_LOST after the Windows TDR. Pinning the size makes
+    /// the runtime match the assumption. ISS_PIN_SUBGROUP=0 restores the driver's choice.
+    u32 RequiredComputeSubgroupSize() const {
+        return RequiredSubgroupSize(vk::ShaderStageFlagBits::eCompute);
+    }
+
+    /// iss: the same for any stage: graphics stages run the same wave64 lowering (ballots in
+    /// vertex and fragment shaders), and drivers report per stage whether the size can be required.
+    u32 RequiredSubgroupSize(vk::ShaderStageFlagBits stage_bit) const {
+        if (IsSubgroupSize64Supported()) {
+            return 64;
+        }
+        static const bool pin = [] {
+            const char* p = std::getenv("ISS_PIN_SUBGROUP");
+            return !(p && p[0] == '0');
+        }();
+        const u32 size = vk11_props.subgroupSize;
+        if (!pin || !vk13_features.subgroupSizeControl ||
+            !(vk13_props.requiredSubgroupSizeStages & stage_bit) ||
+            vk13_props.minSubgroupSize == vk13_props.maxSubgroupSize ||
+            size < vk13_props.minSubgroupSize || size > vk13_props.maxSubgroupSize) {
+            return 0;
+        }
+        return size;
+    }
+
+    /// iss: the driver's {min, max} subgroup size (VK_EXT_subgroup_size_control).
+    std::pair<u32, u32> GetSubgroupSizeRange() const {
+        return {vk13_props.minSubgroupSize, vk13_props.maxSubgroupSize};
     }
 
     /// Returns true when VK_KHR_workgroup_memory_explicit_layout is supported.

@@ -1223,6 +1223,20 @@ void PipelineCache::ScoutDraw(const AmdGpu::Regs& regs, AmdGpu::ScoutDraw& draw,
     }
 }
 
+// iss: a GCN workgroup of 64 invocations runs as one wave in lockstep, so the game's compute
+// shaders share LDS within it without barriers. Hosts whose subgroups are narrower (NVIDIA, and
+// Intel Xe at 32) split it into subgroups that do not run in lockstep: those reads race (wrong
+// lighting, black surfaces) and loops waiting on another half's LDS writes can spin forever
+// (GPU hang, device lost). Only NVIDIA got the barriers; any host not running 64 wide needs them.
+// ISS_LDS_BARRIERS=0 restores the driver-ID rule (testing).
+static bool SplitsGcnWaves(const Instance& instance) {
+    static const bool allowed = [] {
+        const char* p = std::getenv("ISS_LDS_BARRIERS");
+        return !(p && p[0] == '0');
+    }();
+    return allowed && !instance.IsSubgroupSize64Supported() && instance.SubgroupSize() < 64;
+}
+
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
@@ -1276,7 +1290,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
                                       instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
-                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp ||
+                              SplitsGcnWaves(instance),
         .lds_barriers_multi_wave =
             Common::Perf::GetTuning().lds_barriers_multi_wave.load(std::memory_order_relaxed),
         .wave_memory_barriers =
@@ -1298,7 +1313,13 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         Shader::dynamic_buffer_stride = (dynamic && dynamic[0] == '1') ||
                                         (aot && aot[0] != '\0' && !(stats && stats[0] == '1'));
     }
-    SetComputeShaderVariant((lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u) |
+    // Bit 8: LDS barriers on a host that splits GCN waves for a reason other than its driver ID
+    // (Intel), so its caches compiled without them are compiled again once; NVIDIA keeps its own.
+    const bool lds_by_subgroup = SplitsGcnWaves(instance) &&
+                                 instance.GetDriverID() != vk::DriverId::eNvidiaProprietary &&
+                                 instance.GetDriverID() != vk::DriverId::eMesaKosmickrisp;
+    SetComputeShaderVariant((lds_by_subgroup ? 8u : 0u) |
+                            (lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u) |
                             (Shader::dynamic_buffer_stride ? 4u : 0u));
     LOG_INFO(Render_Vulkan,
              "Compute shader LDS barriers for multi wave workgroups: {}, buffer memory barriers "

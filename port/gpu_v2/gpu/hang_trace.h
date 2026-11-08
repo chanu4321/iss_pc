@@ -51,14 +51,14 @@ inline void Note(std::uint64_t tick, std::uint64_t hash, std::uint32_t queue, st
     d.stamp.store(seq + 1, std::memory_order_release);
 }
 
-/// The dispatches noted on `queue` with done < tick <= upto, grouped by shader (at most 48).
-inline void Dump(std::uint32_t queue, std::uint64_t done, std::uint64_t upto) {
+/// The dispatches noted on `queue` with done < tick <= upto, grouped by shader (at most 96).
+inline void DumpRange(std::uint32_t queue, std::uint64_t done, std::uint64_t upto) {
     if (!Enabled()) return;
     struct Row {
         std::uint64_t hash, first_tick;
         std::uint32_t count, x, y, z;
     };
-    std::array<Row, 48> rows{};
+    std::array<Row, 96> rows{};
     std::uint32_t num_rows = 0, total = 0;
     const std::uint64_t end = next.load(std::memory_order_acquire);
     const std::uint64_t begin = end > RingSize ? end - RingSize : 0;
@@ -81,6 +81,13 @@ inline void Dump(std::uint32_t queue, std::uint64_t done, std::uint64_t upto) {
         std::fprintf(stderr, "  shader=%08llx count=%u first_tick=%llu groups=%ux%ux%u\n",
                      (unsigned long long)rows[i].hash, rows[i].count,
                      (unsigned long long)rows[i].first_tick, rows[i].x, rows[i].y, rows[i].z);
+}
+
+/// First the tick the GPU is stuck in (done + 1: the shortest list of suspects), then every
+/// unfinished tick. ISS_SUBMIT_EVERY=N (draws per submission) makes the ticks smaller.
+inline void Dump(std::uint32_t queue, std::uint64_t done, std::uint64_t upto) {
+    DumpRange(queue, done, done + 1);
+    if (upto > done + 1) DumpRange(queue, done, upto);
 }
 
 } // namespace iss::hang_trace

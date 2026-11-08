@@ -175,6 +175,12 @@ def renderer_v2_env(settings):
     # Native passes and unified memory: the launcher's switches (backports_table.py has the defaults).
     states = experimental_states(settings)
     for key, var in (('native_passes', 'ISS_NATIVE_PASSES'), ('v2_unified_memory', 'ISS_UNIFIED_MEMORY')):
+        # TLG_<name> set outside the launcher wins too (the probe copies ISS_ to TLG_ only when
+        # TLG_ is unset, and the renderer reads ISS_): TLG_NATIVE_PASSES=0 was ignored.
+        outside = os.environ.get('TLG_' + var[len('ISS_'):])
+        if outside is not None:
+            env[var] = outside
+            continue
         item = next(i for i in backports_table.ITEMS if i.key == key)
         env[var] = '1' if backports_table.effective(item, states) == '1' else '0'
     return env

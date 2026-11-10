@@ -62,6 +62,10 @@ struct VkData {
     vk::ShaderModule shader_module_frag{};
 
     std::mutex command_pool_mutex;
+    // iss: the descriptor pool must be externally synchronized. The present thread allocates from
+    // it (font atlas, UpdateTextures) while the GPU command processor frees and allocates a frame's
+    // set when the guest output size changes (Presenter::RecreateFrame).
+    std::mutex descriptor_pool_mutex;
     vk::CommandPool command_pool{};
     vk::Sampler simple_sampler{};
 
@@ -294,6 +298,7 @@ ImTextureID AddTexture(vk::ImageView image_view, vk::ImageLayout image_layout,
             .descriptorSetCount = 1,
             .pSetLayouts = &bd->descriptor_set_layout,
         };
+        std::scoped_lock lk(bd->descriptor_pool_mutex);
         descriptor_set = CheckVkResult(v.device.allocateDescriptorSets(alloc_info)).front();
     }
 
@@ -483,7 +488,10 @@ void RemoveTexture(ImTextureID texture) {
     IM_ASSERT(texture != nullptr);
     VkData* bd = GetBackendData();
     const InitInfo& v = bd->init_info;
-    CheckVkErr(v.device.freeDescriptorSets(bd->descriptor_pool, {texture->descriptor_set}));
+    {
+        std::scoped_lock lk(bd->descriptor_pool_mutex);
+        CheckVkErr(v.device.freeDescriptorSets(bd->descriptor_pool, {texture->descriptor_set}));
+    }
     delete texture;
 }
 

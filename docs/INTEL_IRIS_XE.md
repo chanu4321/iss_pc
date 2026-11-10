@@ -27,6 +27,7 @@ driver 101.7092. Game: CUSA00004 (EU) 1.07, whose executable is the US 1.07 one 
 | 2ed61a6 | ISS_SUBMIT_EVERY=50 | hang |
 | 2ed61a6 | multi-wave barriers off | hang at ~85 s |
 | 5a9f528 | ISS_SUBMIT_EVERY_DISPATCH=20 | 9 min clean (one run) |
+| 1316e1f | ISS_FULL_BARRIERS=1 | hang at ~40 s and ~30 s (two runs) |
 
 The hung submission held hundreds of compute dispatches (421, 597, 1126) of the same ~50
 shaders each time, mostly 1x1x1 groups. Indirect dispatches were not in those lists (fixed in
@@ -39,8 +40,18 @@ d703368).
 3. A shader that fails only with some timing or overlap.
 4. Chance: the hang is irregular, and one clean run proves little.
 
-`ISS_FULL_BARRIERS=1` (full barrier before and after every dispatch, same submission sizes)
-separates 1 from 2. Each result needs at least two long runs.
+`ISS_FULL_BARRIERS=1` (full barrier before and after every dispatch, same submission sizes) hung
+twice, sooner than without it, so hypothesis 1 is unlikely. The same 24 shaders are in the stuck
+submission of every hang, but they also run every frame, so being there does not single one out.
+`ISS_SKIP_DISPATCH` on a half of them at a time is the next test.
+
+## Other crashes
+
+- Start-up fault in `igvk64.dll` inside `ImGui::Vulkan::RemoveTexture` (Presenter::RecreateFrame,
+  when the guest output size changes): the ImGui descriptor pool was used by the present thread
+  and the GPU command processor without a lock. Locked since.
+- Fault in `TextureCache::InvalidateMemoryFromGPU` (from `Rasterizer::CopyBuffer`) right after a
+  hang: a copy to a nonsense address once the device is lost; a consequence of the hang.
 
 ## Switches (all off by default unless noted)
 
